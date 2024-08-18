@@ -5,7 +5,7 @@ import torch
 import faiss
 import numpy as np
 from glob import glob
-from my_faiss_index import LocalFaissIndex
+from faiss_index import LocalFaissIndex
 import pandas as pd
 import math
 from scipy import stats
