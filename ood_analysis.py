@@ -5,7 +5,7 @@ import torch
 import faiss
 import numpy as np
 from glob import glob
-from my_faiss_index import LocalFaissIndex
+from faiss_index import LocalFaissIndex
 import pandas as pd
 import math
 from scipy import stats
@@ -17,7 +17,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 args = get_args()
 
-os.environ["CUDA_VISIBLEgt_pose_x_DEVICES"] = args.gpu
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 def get_pose_diff_from_csv(train_row, test_pose_x, test_pose_q):
     train_pose_x = train_row['gt_pose_x']
