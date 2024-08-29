@@ -17,7 +17,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 args = get_args()
 
-os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+os.environ["CUDA_VISIBLEgt_pose_x_DEVICES"] = args.gpu
 
 def get_pose_diff_from_csv(train_row, test_pose_x, test_pose_q):
     train_pose_x = train_row['gt_pose_x']
@@ -124,13 +124,14 @@ def find_ood_by_distance(train_path, test_path, th_x, th_q):
     print(len(ood_list))
     return ood_list           
 
-def find_nn_by_distance(train_path, test_path, test_image):      
+def find_nn_by_distance(train_path, test_path, test_image, thr_x, thr_q):      
     train_df = pd.read_csv(train_path+'/dfnet_res.csv')
     test_df = pd.read_csv(test_path+'/dfnet_res.csv')
     train_df = train_df.reset_index()  # make sure indexes pair with number of rows
     test_df = test_df.reset_index()  # make sure indexes pair with number of rows
     nn_list_x = {}
     nn_list_theta = {}
+    nn_list_closest = {}
     min_error_x = 100
     min_theta = 100
     #loop over all poses and find images where test pose if far from all train poses
@@ -145,6 +146,8 @@ def find_nn_by_distance(train_path, test_path, test_image):
         for i2, train_row in train_df.iterrows():
             error_x, theta = get_pose_diff_from_csv(train_row,test_pose_x, test_pose_q)      
             train_filename = train_row['filename']
+            if error_x < thr_x and theta < thr_q:
+                nn_list_closest[train_filename] = [error_x, theta]
             if error_x < min_error_x:
                 min_error_x = error_x
                 nn_list_x[train_filename] = min_error_x
@@ -155,7 +158,7 @@ def find_nn_by_distance(train_path, test_path, test_image):
         
     nn_list_x = dict(sorted(nn_list_x.items(), key=lambda item: item[1]))
     nn_list_theta = dict(sorted(nn_list_theta.items(), key=lambda item: item[1]))
-    return nn_list_x, nn_list_theta
+    return nn_list_x, nn_list_theta, nn_list_closest
 
 
 def get_ood_list(train_path, test_path, th_x, th_q, is_find_ood):
@@ -214,13 +217,55 @@ def calc_ood_stats(train_path, test_path, th_x, th_q, is_find_ood):
     print('th_x: '+str(th_x)+'m th_q: '+str(th_q)+'deg')
     print('ood size: '+str(len(ood)-1))
     print('high_err_in_ood: ' + str(high_err_in_ood))
-    print('high_err_not_in_ood: ' + str(high_err_not_in_ood))              
+    print('high_err_not_in_ood: ' + str(high_err_not_in_ood))           
+    
+    
+def find_nn_by_similarity(train_path, test_path, testname):
+    #load train features to faiss    
+    print('test file: ' + testname)
+    is_normalize = False
+    ftrain, train_names = load_features(train_path, is_normalize)
+    ftest, test_names = load_features(test_path, is_normalize)
+    if is_normalize:
+        train_faiss = faiss.IndexFlatL2(ftrain.shape[1])
+        train_faiss.add(ftrain)
+    else:    
+        train_faiss = LocalFaissIndex()
+        #insert all train vector to faiss
+        for i in range(len(ftrain)):
+            feat = ftrain[i]
+            filename = train_names[i]
+            feat = np.expand_dims(feat, axis=0)
+            idx, vector = train_faiss.insert_to_index(feat, filename)           
+        
+    #go over test images and find best match in train    
+    i = 0
+    k = 20
+    for name in test_names:
+        if testname not in name:
+            i += 1        
+            continue
+        feat = ftest[i]        
+        feat = np.expand_dims(feat, axis=0)
+        if is_normalize:                    
+            scores, _ = train_faiss.search(feat, k)            
+        else:
+            idx, scores, names = train_faiss.search(feat, k)       
+        
+        break
+    
+    print('train nn: ')
+    print(names)
+    print('train nn scores: ')
+    print(scores)    
+    
+    return names, scores
       
 
-def analyze_ood(train_path, test_path, filename):    
+def analyze_ood(train_path, test_path, filename, thr_x, thr_q):    
     print('find nn in train for test image: ' + filename)
     print('----------------------------------------------------------------')
-    nn_list_x, nn_list_theta = find_nn_by_distance(train_path, test_path, filename)
+    nn_list_x, nn_list_theta, nn_list_closest = find_nn_by_distance(train_path, test_path, filename,  thr_x, thr_q)
     n = 5
     n_items = list(nn_list_x.items())[:n]
     print('nn_list_x: ')
@@ -228,21 +273,24 @@ def analyze_ood(train_path, test_path, filename):
     n_items = list(nn_list_theta.items())[:n]
     print('nn_list_theta: ')
     print(n_items)
+    print('nn_list_closest: ')
+    print(nn_list_closest)
     
     
 
 def main():
     is_find_ood = False
-    th_x = 5
-    th_q = 10
+    th_x = 1
+    th_q = 40
     thr_sim = 0.8
-    train_path = 'features/church/dfnet_features_train'
-    test_path = 'features/church/dfnet_features_test'
+    train_path = 'features/shop/dfnet_features_train'
+    test_path = 'features/shop/dfnet_features_test'
     #calc_ood_stats(train_path, test_path, th_x, th_q, is_find_ood) 
     #ood, ood_str = get_ood_list(train_path, test_path, th_x, th_q, is_find_ood)    
     #find_ood_by_similarity(train_path, test_path, ood, thr_sim)
-    filename = "seq13_frame00050.png"    
-    analyze_ood(train_path, test_path, filename)
+    filename = "seq1_frame00005"    
+    #analyze_ood(train_path, test_path, filename, th_x, th_q)
+    find_nn_by_similarity(train_path, test_path, filename)
             
 
 if __name__ == "__main__":
