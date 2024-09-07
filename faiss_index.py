@@ -16,10 +16,12 @@ class LocalFaissIndex:
     """
     def __init__(self):
         self.index_map = faiss.IndexIDMap(faiss.IndexFlatIP(512))
+        #self.index_map = faiss.IndexIDMap(faiss.IndexFlatL2(512))        
         self.faiss_labels = {}
 
     def reset(self):
         self.index_map = faiss.IndexIDMap(faiss.IndexFlatIP(512))
+        #self.index_map = faiss.IndexIDMap(faiss.IndexFlatL2(512))        
         self.faiss_labels = {} 
 
     def search(self, query_vector, k=1):

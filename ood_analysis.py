@@ -13,7 +13,7 @@ from eigenplaces_model import eigenplaces_network
 from PIL import Image
 import torchvision.transforms as transforms
 import torchvision
-from util import utils
+from util import utils, bf_matching
 import cv2
 
 torch.manual_seed(1)
@@ -231,7 +231,7 @@ def calc_ood_stats(train_path, test_path, th_x, th_q, is_find_ood):
 def find_nn_by_similarity(train_path, test_path, testname=None):
     #load train features to faiss    
     #print('test file: ' + testname)
-    is_normalize = False
+    is_normalize = True
     ftrain, train_names = load_features(train_path, is_normalize)
     ftest, test_names = load_features(test_path, is_normalize)
     if is_normalize:
@@ -257,10 +257,14 @@ def find_nn_by_similarity(train_path, test_path, testname=None):
         feat = ftest[i]        
         feat = np.expand_dims(feat, axis=0)
         if is_normalize:                    
-            scores, _ = train_faiss.search(feat, k)            
+            scores, idx = train_faiss.search(feat, k)       
+            nn_name = train_names[idx[0][0]]
+            nn_score = scores[0][0]
         else:
             idx, scores, names = train_faiss.search(feat, k)               
-        test_train_nn[name] = {'nn': names[0], 'score': scores[0]}
+            nn_name = name[0]
+            nn_score = scores[0]
+        test_train_nn[name] = {'nn': nn_name, 'score': nn_score}
         i += 1        
         if testname is not None:
             break
@@ -311,13 +315,21 @@ def load_images(test_img_name, train_img_name, args):
     test_img_270 = reproj_transform(test_img_270).unsqueeze(0)
     train_img_270 = Image.open(train_img_name)
     train_img_270 = reproj_transform(train_img_270).unsqueeze(0)    
-    filename = os.path.splitext(os.path.basename(train_img_name))[0]    
+    filename = os.path.splitext(os.path.basename(train_img_name))[0]   
+    bTrainDepthFound = True 
     depth_file_name = args.dataset_folder + 'depth_noseg/' + filename + '.depth.tiff'
-    img_depth = cv2.imread(depth_file_name, -1)
-    img_depth = cv2.resize(img_depth, (480, 270))    
-    train_img_depth = torch.from_numpy(img_depth.astype(np.float32)).unsqueeze(0).unsqueeze(0)    
-    filename = os.path.splitext(os.path.basename(test_img_name))[0]    
-    depth_file_name = args.dataset_folder + 'depth_noseg/' + filename + '.depth.tiff'
+    if not os.path.exists(depth_file_name):
+        depth_file_name = args.dataset_folder + 'depth_noseg/' + filename + '.depth.png'
+        if not os.path.exists(depth_file_name):            
+            print('missing: ' + depth_file_name)
+            bTrainDepthFound = False        
+            train_img_depth = None
+    if bTrainDepthFound:
+        img_depth = cv2.imread(depth_file_name, -1)
+        img_depth = cv2.resize(img_depth, (480, 270))    
+        train_img_depth = torch.from_numpy(img_depth.astype(np.float32)).unsqueeze(0).unsqueeze(0)    
+    filename = os.path.splitext(os.path.basename(test_img_name))[0]        
+    depth_file_name = args.dataset_folder + 'depth_noseg/' + filename + '.depth.tiff'    
     if not os.path.exists(depth_file_name):
         print('missing: ' + depth_file_name)
         test_img_depth = None
@@ -392,7 +404,39 @@ def analyze_overlap(train_path, test_path, args, out_csv):
     df = pd.DataFrame(test_train_res)
     df.to_csv(out_csv, index=False)
     return test_train_res
+
+
+def analyze_nn_match(scene_folder, nn_csv):
+    nn_df = pd.read_csv(nn_csv)    
+    nn_df = nn_df.reset_index()  # make sure indexes pair with number of rows    
+    train_sp_folder = scene_folder + '/train/superpoint/'
+    test_sp_folder = scene_folder + '/test/superpoint/'
+    ratio_thresh = 0.7
+    good_matches_cnt = []
+    for i1, row in nn_df.iterrows():
+        test_sp_name = test_sp_folder + row['test_name'] + '.npy'
+        train_sp_name = train_sp_folder + row['nn'] + '.npy'
+        test_sp = np.load(test_sp_name, allow_pickle=True)
+        #keypoints = test_sp.item().get('keypoints')[0]
+        #scores = test_sp.item().get('scores')[0]
+        test_desc = test_sp.item().get('descriptors')[0].t()
+        train_sp = np.load(train_sp_name, allow_pickle=True)
+        train_desc = train_sp.item().get('descriptors')[0].t()
+        knn_matches = bf_matching.match_descriptors(test_desc.detach().cpu().numpy(), train_desc.detach().cpu().numpy())
+        #-- Filter matches using the Lowe's ratio test
+        good_matches = []
+        good = 0
+        for m,n in knn_matches:
+            if m.distance < ratio_thresh * n.distance:
+                good_matches.append(m)
+                good += 1
+        good_matches_cnt.append(good)
     
+    df2 = nn_df.assign(good_match=good_matches_cnt)
+    df2.to_csv(nn_csv, index=False)
+    return good_matches_cnt
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser("ood")
     # CosPlace Groups parameters
@@ -400,8 +444,8 @@ def parse_arguments():
     parser.add_argument("--backbone", type=str, default="ResNet18", choices=["VGG16", "ResNet18", "ResNet50", "ResNet101", "ResNet152"], help="_")
     parser.add_argument("--fc_output_dim", type=int, default=512,  help="Output dimension of final fully connected layer")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"], help="_")
-    parser.add_argument("--scene", type=str, default="hospital", help="_")
-    parser.add_argument("--dataset_folder", type=str, default="/mnt/f/CambridgeLandmarks/OldHospital/", help="_")
+    parser.add_argument("--scene", type=str, default="shop", help="_")
+    parser.add_argument("--dataset_folder", type=str, default="/mnt/f/CambridgeLandmarks/ShopFacade/", help="_")
     args = parser.parse_args()
     return args
     
@@ -421,7 +465,8 @@ def main(args):
     args.train_images_dir = args.dataset_folder + '/train/rgb/'
     args.test_images_dir = args.dataset_folder + '/test/rgb/'
     out_csv = args.scene + '_overlap.csv'
-    analyze_overlap(train_path, test_path, args, out_csv)
+    #analyze_overlap(train_path, test_path, args, out_csv)
+    good_matches_cnt = analyze_nn_match(args.dataset_folder, out_csv)
     
             
 
