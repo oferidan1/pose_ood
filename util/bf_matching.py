@@ -97,7 +97,8 @@ def match_descriptors_bt(descriptors1, descriptors2, norm_type=2, cross_check=Fa
     bf = cv2.BFMatcher(norm_type, cross_check)
     des1 = np.float32(descriptors1)
     des2 = np.float32(descriptors2)
-    matches = bf.match(des1, des2)
+    #matches = bf.match(des1, des2)
+    matches = bf.knnMatch(des1,des2,k=2)
     return matches
 
 
@@ -107,4 +108,11 @@ def lowe_ratio_test(matches, threshold):
         neighbor1, neighbor2 = knn_match_pair
         if neighbor1.distance < threshold * neighbor2.distance:
             good_matches.append(neighbor1)
+    return good_matches
+
+def thr_test(matches, threshold):
+    good_matches = []
+    for i, match in enumerate(matches):        
+        if match.distance < threshold:
+            good_matches.append(match)
     return good_matches

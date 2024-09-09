@@ -422,18 +422,15 @@ def analyze_nn_match(scene_folder, nn_csv):
         test_desc = test_sp.item().get('descriptors')[0].t()
         train_sp = np.load(train_sp_name, allow_pickle=True)
         train_desc = train_sp.item().get('descriptors')[0].t()
-        knn_matches = bf_matching.match_descriptors(test_desc.detach().cpu().numpy(), train_desc.detach().cpu().numpy())
+        matches = bf_matching.match_descriptors(test_desc.detach().cpu().numpy(), train_desc.detach().cpu().numpy())
+        #matches = bf_matching.match_descriptors_bt(test_desc.detach().cpu().numpy(), train_desc.detach().cpu().numpy(), cross_check=True)
         #-- Filter matches using the Lowe's ratio test
-        good_matches = []
-        good = 0
-        for m,n in knn_matches:
-            if m.distance < ratio_thresh * n.distance:
-                good_matches.append(m)
-                good += 1
-        good_matches_cnt.append(good)
+        good_matches = bf_matching.lowe_ratio_test(matches, ratio_thresh)
+        #good_matches = bf_matching.thr_test(matches, ratio_thresh)
+        good_matches_cnt.append(len(good_matches))
     
-    df2 = nn_df.assign(good_match=good_matches_cnt)
-    df2.to_csv(nn_csv, index=False)
+    nn_df['good_match'] = good_matches_cnt
+    nn_df.to_csv(nn_csv, index=False)
     return good_matches_cnt
 
 
@@ -444,8 +441,8 @@ def parse_arguments():
     parser.add_argument("--backbone", type=str, default="ResNet18", choices=["VGG16", "ResNet18", "ResNet50", "ResNet101", "ResNet152"], help="_")
     parser.add_argument("--fc_output_dim", type=int, default=512,  help="Output dimension of final fully connected layer")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"], help="_")
-    parser.add_argument("--scene", type=str, default="shop", help="_")
-    parser.add_argument("--dataset_folder", type=str, default="/mnt/f/CambridgeLandmarks/ShopFacade/", help="_")
+    parser.add_argument("--scene", type=str, default="hospital", help="_")
+    parser.add_argument("--dataset_folder", type=str, default="/mnt/f/CambridgeLandmarks/OldHospital/", help="_")
     args = parser.parse_args()
     return args
     
